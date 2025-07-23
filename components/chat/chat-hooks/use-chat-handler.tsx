@@ -191,7 +191,8 @@ export const useChatHandler = () => {
   const handleSendMessage = async (
     messageContent: string,
     chatMessages: ChatMessage[],
-    isRegeneration: boolean
+    isRegeneration: boolean,
+    useWebSearch: boolean = false
   ) => {
     const startingInput = messageContent
 
@@ -258,6 +259,87 @@ export const useChatHandler = () => {
           setChatMessages,
           selectedAssistant
         )
+
+      if (useWebSearch) {
+        setToolInUse("web-search")
+
+        const res = await fetch("/api/chat/web-search", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          signal: newAbortController.signal,
+          body: JSON.stringify({
+            query: messageContent,
+            chatSettings,
+            messages: isRegeneration
+              ? chatMessages
+              : [...chatMessages, tempUserChatMessage]
+          })
+        })
+        if (!res.ok) throw new Error("Web‑search API error")
+        const { message: assistantContent } = await res.json()
+
+        // Add user message to UI if not present
+        let updatedMessages = isRegeneration
+          ? [...chatMessages]
+          : [...chatMessages, tempUserChatMessage]
+        // Add assistant message to UI with 'web-search' label
+        if (assistantContent) {
+          const assistantMsg: ChatMessage = {
+            message: {
+              id: `assistant-${Date.now()}`,
+              chat_id: selectedChat?.id || "",
+              user_id: profile?.user_id || "",
+              assistant_id: "web-search", // Set label to 'web-search'
+              role: "assistant",
+              content: assistantContent,
+              model: chatSettings?.model || "",
+              sequence_number: updatedMessages.length,
+              image_paths: [],
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString()
+            },
+            fileItems: []
+          }
+          updatedMessages = [...updatedMessages, assistantMsg]
+        }
+        setChatMessages(updatedMessages)
+
+        // Persist both user and assistant messages to the database for refresh persistence
+        let currentChat = selectedChat ? { ...selectedChat } : null
+        if (!currentChat) {
+          currentChat = await handleCreateChat(
+            chatSettings!,
+            profile!,
+            selectedWorkspace!,
+            messageContent,
+            selectedAssistant!,
+            newMessageFiles,
+            setSelectedChat,
+            setChats,
+            setChatFiles
+          )
+        }
+        await handleCreateMessages(
+          updatedMessages,
+          currentChat,
+          profile!,
+          modelData!,
+          messageContent,
+          assistantContent || "",
+          newMessageImages,
+          isRegeneration,
+          [],
+          setChatMessages,
+          setChatFileItems,
+          setChatImages,
+          selectedAssistant
+        )
+
+        setToolInUse("none")
+        setIsGenerating(false)
+        setFirstTokenReceived(false)
+        return
+      }
 
       let payload: ChatPayload = {
         chatSettings: chatSettings!,
@@ -364,6 +446,7 @@ export const useChatHandler = () => {
         })
       }
 
+      // Always persist after state update, and only then update UI state
       await handleCreateMessages(
         chatMessages,
         currentChat,

@@ -1,3 +1,4 @@
+// components/chat/ChatInput.tsx
 import { ChatbotUIContext } from "@/context/context"
 import useHotkey from "@/lib/hooks/use-hotkey"
 import { LLM_LIST } from "@/lib/models/llm/llm-list"
@@ -21,16 +22,12 @@ import { useChatHistoryHandler } from "./chat-hooks/use-chat-history"
 import { usePromptAndCommand } from "./chat-hooks/use-prompt-and-command"
 import { useSelectFileHandler } from "./chat-hooks/use-select-file-handler"
 
-interface ChatInputProps {}
+interface ChatInputProps { }
 
-export const ChatInput: FC<ChatInputProps> = ({}) => {
+export const ChatInput: FC<ChatInputProps> = () => {
   const { t } = useTranslation()
-
-  useHotkey("l", () => {
-    handleFocusChatInput()
-  })
-
-  const [isTyping, setIsTyping] = useState<boolean>(false)
+  const [isTyping, setIsTyping] = useState(false)
+  const [useWebSearch, setUseWebSearch] = useState(false)
 
   const {
     isAssistantPickerOpen,
@@ -65,9 +62,7 @@ export const ChatInput: FC<ChatInputProps> = ({}) => {
   } = useChatHandler()
 
   const { handleInputChange } = usePromptAndCommand()
-
   const { filesToAccept, handleSelectDeviceFile } = useSelectFileHandler()
-
   const {
     setNewMessageContentToNextUserMessage,
     setNewMessageContentToPreviousUserMessage
@@ -78,17 +73,18 @@ export const ChatInput: FC<ChatInputProps> = ({}) => {
   useEffect(() => {
     setTimeout(() => {
       handleFocusChatInput()
-    }, 200) // FIX: hacky
+    }, 200)
   }, [selectedPreset, selectedAssistant])
 
   const handleKeyDown = (event: React.KeyboardEvent) => {
+    // on Enter (no shift) send, passing useWebSearch flag
     if (!isTyping && event.key === "Enter" && !event.shiftKey) {
       event.preventDefault()
       setIsPromptPickerOpen(false)
-      handleSendMessage(userInput, chatMessages, false)
+      handleSendMessage(userInput, chatMessages, false, useWebSearch)
     }
 
-    // Consolidate conditions to avoid TypeScript error
+    // navigate pickers
     if (
       isPromptPickerOpen ||
       isFilePickerOpen ||
@@ -101,7 +97,6 @@ export const ChatInput: FC<ChatInputProps> = ({}) => {
         event.key === "ArrowDown"
       ) {
         event.preventDefault()
-        // Toggle focus based on picker type
         if (isPromptPickerOpen) setFocusPrompt(!focusPrompt)
         if (isFilePickerOpen) setFocusFile(!focusFile)
         if (isToolPickerOpen) setFocusTool(!focusTool)
@@ -109,35 +104,14 @@ export const ChatInput: FC<ChatInputProps> = ({}) => {
       }
     }
 
+    // edit history navigation
     if (event.key === "ArrowUp" && event.shiftKey && event.ctrlKey) {
       event.preventDefault()
       setNewMessageContentToPreviousUserMessage()
     }
-
     if (event.key === "ArrowDown" && event.shiftKey && event.ctrlKey) {
       event.preventDefault()
       setNewMessageContentToNextUserMessage()
-    }
-
-    //use shift+ctrl+up and shift+ctrl+down to navigate through chat history
-    if (event.key === "ArrowUp" && event.shiftKey && event.ctrlKey) {
-      event.preventDefault()
-      setNewMessageContentToPreviousUserMessage()
-    }
-
-    if (event.key === "ArrowDown" && event.shiftKey && event.ctrlKey) {
-      event.preventDefault()
-      setNewMessageContentToNextUserMessage()
-    }
-
-    if (
-      isAssistantPickerOpen &&
-      (event.key === "Tab" ||
-        event.key === "ArrowUp" ||
-        event.key === "ArrowDown")
-    ) {
-      event.preventDefault()
-      setFocusAssistant(!focusAssistant)
     }
   }
 
@@ -146,47 +120,42 @@ export const ChatInput: FC<ChatInputProps> = ({}) => {
       llm => llm.modelId === chatSettings?.model
     )?.imageInput
 
-    const items = event.clipboardData.items
-    for (const item of items) {
-      if (item.type.indexOf("image") === 0) {
+    for (const item of event.clipboardData.items) {
+      if (item.type.startsWith("image")) {
         if (!imagesAllowed) {
           toast.error(
-            `Images are not supported for this model. Use models like GPT-4 Vision instead.`
+            t(
+              "Bilder werden von diesem Modell nicht unterstützt. Bitte verwende z.B. GPT-4 Vision."
+            )
           )
           return
         }
         const file = item.getAsFile()
-        if (!file) return
-        handleSelectDeviceFile(file)
+        if (file) handleSelectDeviceFile(file)
       }
     }
   }
 
   return (
     <>
-      <div className="flex flex-col flex-wrap justify-center gap-2">
+      {/* ==== files, tools, assistant banner ==== */}
+      <div className="flex flex-col gap-2">
         <ChatFilesDisplay />
 
-        {selectedTools &&
-          selectedTools.map((tool, index) => (
-            <div
-              key={index}
-              className="flex justify-center"
-              onClick={() =>
-                setSelectedTools(
-                  selectedTools.filter(
-                    selectedTool => selectedTool.id !== tool.id
-                  )
-                )
-              }
-            >
-              <div className="flex cursor-pointer items-center justify-center space-x-1 rounded-lg bg-purple-600 px-3 py-1 hover:opacity-50">
-                <IconBolt size={20} />
-
-                <div>{tool.name}</div>
-              </div>
+        {selectedTools.map(tool => (
+          <div
+            key={tool.id}
+            className="flex justify-center"
+            onClick={() =>
+              setSelectedTools(selectedTools.filter(t => t.id !== tool.id))
+            }
+          >
+            <div className="flex cursor-pointer items-center space-x-1 rounded-lg bg-purple-600 px-3 py-1 hover:opacity-50">
+              <IconBolt size={20} />
+              <div>{tool.name}</div>
             </div>
-          ))}
+          </div>
+        ))}
 
         {selectedAssistant && (
           <div className="border-primary mx-auto flex w-fit items-center space-x-2 rounded-lg border p-1.5">
@@ -196,53 +165,62 @@ export const ChatInput: FC<ChatInputProps> = ({}) => {
                 src={
                   assistantImages.find(
                     img => img.path === selectedAssistant.image_path
-                  )?.base64
+                  )?.base64 || ""
                 }
                 width={28}
                 height={28}
                 alt={selectedAssistant.name}
               />
             )}
-
             <div className="text-sm font-bold">
-              Talking to {selectedAssistant.name}
+              {t("Spricht mit")} {selectedAssistant.name}
             </div>
           </div>
         )}
+
+        {/* ==== web‑search toggle ==== */}
+        <div className="flex items-center px-4">
+          <input
+            id="web-search-toggle"
+            type="checkbox"
+            checked={useWebSearch}
+            onChange={e => setUseWebSearch(e.target.checked)}
+            className="mr-2 size-4 rounded border-gray-300"
+          />
+          <label htmlFor="web-search-toggle" className="text-sm">
+            {t("Websuche aktivieren")}
+          </label>
+        </div>
       </div>
 
+      {/* ==== input area ==== */}
       <div className="border-input relative mt-3 flex min-h-[60px] w-full items-center justify-center rounded-xl border-2">
-        <div className="absolute bottom-[76px] left-0 max-h-[300px] w-full overflow-auto rounded-xl dark:border-none">
+        {/* slash‑commands */}
+        <div className="absolute bottom-[76px] left-0 max-h-[300px] w-full overflow-auto rounded-xl">
           <ChatCommandInput />
         </div>
 
-        <>
-          <IconCirclePlus
-            className="absolute bottom-[12px] left-3 cursor-pointer p-1 hover:opacity-50"
-            size={32}
-            onClick={() => fileInputRef.current?.click()}
-          />
+        {/* file picker */}
+        <IconCirclePlus
+          className="absolute bottom-[12px] left-3 cursor-pointer p-1 hover:opacity-50"
+          size={32}
+          onClick={() => fileInputRef.current?.click()}
+        />
+        <Input
+          ref={fileInputRef}
+          type="file"
+          className="hidden"
+          onChange={e => {
+            if (e.target.files) handleSelectDeviceFile(e.target.files[0])
+          }}
+          accept={filesToAccept}
+        />
 
-          {/* Hidden input to select files from device */}
-          <Input
-            ref={fileInputRef}
-            className="hidden"
-            type="file"
-            onChange={e => {
-              if (!e.target.files) return
-              handleSelectDeviceFile(e.target.files[0])
-            }}
-            accept={filesToAccept}
-          />
-        </>
-
+        {/* text input */}
         <TextareaAutosize
           textareaRef={chatInputRef}
           className="ring-offset-background placeholder:text-muted-foreground focus-visible:ring-ring text-md flex w-full resize-none rounded-md border-none bg-transparent px-14 py-2 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50"
-          placeholder={t(
-            // `Ask anything. Type "@" for assistants, "/" for prompts, "#" for files, and "!" for tools.`
-            `Ask anything. Type @  /  #  !`
-          )}
+          placeholder={t("Wie kann ich dir heute helfen?")}
           onValueChange={handleInputChange}
           value={userInput}
           minRows={1}
@@ -253,6 +231,7 @@ export const ChatInput: FC<ChatInputProps> = ({}) => {
           onCompositionEnd={() => setIsTyping(false)}
         />
 
+        {/* send / stop */}
         <div className="absolute bottom-[14px] right-3 cursor-pointer hover:opacity-50">
           {isGenerating ? (
             <IconPlayerStopFilled
@@ -268,8 +247,7 @@ export const ChatInput: FC<ChatInputProps> = ({}) => {
               )}
               onClick={() => {
                 if (!userInput) return
-
-                handleSendMessage(userInput, chatMessages, false)
+                handleSendMessage(userInput, chatMessages, false, useWebSearch)
               }}
               size={30}
             />
